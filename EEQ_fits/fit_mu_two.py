@@ -4,15 +4,22 @@ import emcee as mc
 ####################################################################################
 ### Mass equipartition models based on Bianchini et al. (2016)
 #  
-# the model defines a "equipartition mass", stars with masses larger than m_eq are in full equipartition
+# The model defines a "equipartition mass", stars with masses larger than m_eq are in full equipartition
 #
-#            \  s0*exp(-0.5*(m/m_eq))    m < m_eq  
+#            \  s_0*exp(-0.5*(m/m_eq))    m < m_eq  
 # sigma(m) = \
-#            \  -1/2                     m > m_eq 
+#            \  s_eq*(m/m_eq)^{-1/2}      m > m_eq 
 #
-# (update definition)
+# In this version we use mu = 1/m_eq as fitting parameter for the degree of energy equipartition, therefore:
+#
+#            \  s_0*exp(-0.5*(m*mu))    m*mu < 1  
+# sigma(m) = \
+#            \  s_eq*(m*mu)^{-1/2}      m*mu > 1 
+#
+# The code allows for mu < 0. See Aros & Vesperini (2023) for further details.
+#
 
-def meq_new(m,s0,mu):
+def model_mu(m,s0,mu):
     aux_s = np.zeros(m.size)
     if mu > 0:
         idx_dn = np.where(m*mu<=1)[0]
@@ -42,10 +49,10 @@ def meq_new(m,s0,mu):
 #############################################################################
 ### FIT  DISCRETE DATA (vel_i,mass_i) 
 
-def meq_dis_lnlike(theta,vpmr,e_vpmr,vpmt,e_vpmt,mass):
+def mu_dis_lnlike(theta,vpmr,e_vpmr,vpmt,e_vpmt,mass):
     s0, mu = theta
     
-    s_mod = meq_new(mass,s0,mu)
+    s_mod = model_mu(mass,s0,mu)
     
     aux_01 = -0.5*np.sum(np.log(2*np.pi*(s_mod**2+e_vpmr**2)))
     aux_02 = -0.5*np.sum((vpmr**2/(s_mod**2+e_vpmr**2)))
@@ -55,24 +62,24 @@ def meq_dis_lnlike(theta,vpmr,e_vpmr,vpmt,e_vpmt,mass):
 
     return aux_01 + aux_02 + aux_03 + aux_04
 
-def meq_dis_lnprior(theta):
+def mu_dis_lnprior(theta):
     s0, mu = theta    
     if 0 < s0  and  -100 < mu < 100:
         return 0.0
     else:
         return -np.inf
     
-def meq_dis_lnprob(theta,vpmr,e_vpmr,vpmt,e_vpmt,mass):
-    lp = meq_dis_lnprior(theta)
+def mu_dis_lnprob(theta,vpmr,e_vpmr,vpmt,e_vpmt,mass):
+    lp = mu_dis_lnprior(theta)
     if not np.isfinite(lp):
         return -np.inf
-    return lp + meq_dis_lnlike(theta,vpmr,e_vpmr,vpmt,e_vpmt,mass)
+    return lp + mu_dis_lnlike(theta,vpmr,e_vpmr,vpmt,e_vpmt,mass)
 
 
-def fit_dis_meq(vpmr,e_vpmr,vpmt,e_vpmt,mass,init_guess,n_dim=2,n_walkers=100,n_steps=2000,progress=False):
+def fit_dis_mu(vpmr,e_vpmr,vpmt,e_vpmt,mass,init_guess,n_dim=2,n_walkers=100,n_steps=2000,progress=False):
     pos = [init_guess + 1e-4*np.random.randn(n_dim) for i in range(n_walkers)]
 
-    sampler = mc.EnsembleSampler(n_walkers, n_dim, meq_dis_lnprob, args=(vpmr,e_vpmr,vpmt,e_vpmt,mass))
+    sampler = mc.EnsembleSampler(n_walkers, n_dim, mu_dis_lnprob, args=(vpmr,e_vpmr,vpmt,e_vpmt,mass))
     sampler.run_mcmc(pos, n_steps, progress=progress)
 
     ###
@@ -108,16 +115,16 @@ def get_ML_errors(samples,logLike):
     return np.array([bst,lwL,upL])
 
 
-def get_meq_fit(vpmr,e_vpmr,vpmt,e_vpmt,mass,init_guess,n_burn=800,n_walkers=20,n_steps=1000,progress=False):
+def get_mu_fit(vpmr,e_vpmr,vpmt,e_vpmt,mass,init_guess,n_burn=800,n_walkers=20,n_steps=1000,progress=False):
     
-    aux_sample_chain, aux_lnLike_chain = fit_dis_meq(vpmr,e_vpmr,vpmt,e_vpmt,mass,init_guess,n_walkers=n_walkers,n_steps=n_steps,progress=progress)
+    aux_sample_chain, aux_lnLike_chain = fit_dis_mu(vpmr,e_vpmr,vpmt,e_vpmt,mass,init_guess,n_walkers=n_walkers,n_steps=n_steps,progress=progress)
     
     aux_samples = aux_sample_chain[:,n_burn:,:].reshape((-1,2))
     aux_logLike = aux_lnLike_chain[:,n_burn:].reshape(-1)
 
-    aux_MEQ = np.zeros(6)
+    aux_MU = np.zeros(6)
     
-    aux_MEQ[:3] = get_ML_errors(aux_samples[:,0],aux_logLike)
-    aux_MEQ[3:] = get_ML_errors(aux_samples[:,1],aux_logLike)
+    aux_MU[:3] = get_ML_errors(aux_samples[:,0],aux_logLike)
+    aux_MU[3:] = get_ML_errors(aux_samples[:,1],aux_logLike)
     
-    return aux_MEQ
+    return aux_MU
